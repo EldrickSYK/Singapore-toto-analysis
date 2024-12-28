@@ -15,6 +15,7 @@ import gc
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
+## Parameters
 TOTO_DRAW_LIST_URL = 'http://www.singaporepools.com.sg/DataFileArchive/Lottery/Output/toto_result_draw_list_en.html'
 TOTO_RESULT_URL = 'http://www.singaporepools.com.sg/en/product/sr/Pages/toto_results.aspx?sppl='
 
@@ -41,16 +42,14 @@ TOTO_ADDITIONAL_CLASS = 'additional'
 TOTO_WIN_CSS_SEL = TOTO_WIN_CLASS
 TOTO_ADDITIONAL_CSS_SEL = '.' + TOTO_ADDITIONAL_CLASS
 
-# FD_LAST_N_DRAWS = 50
 TOTO_LAST_N_DRAWS = 350
 
 TOTO_OUTLETS = 'divWinningOutlets'
 
-# LOSE = 'Lose'
-
 G1_WINNER_SEARCH_TEXT = 'Group 1 winning tickets sold at'
 G2_WINNER_SEARCH_TEXT = 'Group 2 winning tickets sold at'
 
+NON_PHYSICAL_WIN_LOCS = ['Singapore Pools Account Betting Service - -', 'iTOTO - System 1']
 
 ### Get Toto Draw List ###
 toto_draw_list_page = requests.get(TOTO_DRAW_LIST_URL)
@@ -85,6 +84,8 @@ for toto_sppl_id in toto_sppl_ids:
                 toto_result_soup.find_all(class_=DRAW_DATE_CLASS)[0].get_text().rpartition(', ')[2], 
                 DT_FORMAT
             )
+
+            ## Prize numbers
             toto_prize_numbers = [
                 int(toto_prize_num.get_text())
                 for toto_prize_num 
@@ -92,9 +93,41 @@ for toto_sppl_id in toto_sppl_ids:
             ]
             toto_additional_number = int(toto_result_soup.select(TOTO_ADDITIONAL_CSS_SEL)[0].get_text())
             gc.collect()
+
+            # Append to result list
             toto_result_list.append([toto_result_dt, toto_additional_number, TOTO_ADDITIONAL_CLASS])
             for toto_prize_num in toto_prize_numbers:
                 toto_result_list.append([toto_result_dt, toto_prize_num, TOTO_WIN_CLASS])
+
+            ## Winning outlets
+            check_win_list = toto_result_soup.select('.divWinningOutlets')
+            has_g1_winner = True if len(check_win_list[0].find_all(string=re.compile(G1_WINNER_SEARCH_TEXT))) > 0 else False
+            has_g2_winner = True if len(check_win_list[0].find_all(string=re.compile(G2_WINNER_SEARCH_TEXT))) > 0 else False
+
+            g1_win_loc_list = []
+            g2_win_loc_list = []
+
+            if has_g1_winner and has_g2_winner:
+                g1_win_loc_list = [loc.contents[0].strip() for loc in check_win_list[0].select('ul')[0].select('li')]
+                g2_win_loc_list = [loc.contents[0].strip() for loc in check_win_list[0].select('ul')[1].select('li')]
+            elif has_g1_winner and not has_g2_winner:
+                g1_win_loc_list = [loc.contents[0].strip() for loc in check_win_list[0].select('ul')[0].select('li')]
+            elif not has_g1_winner and has_g2_winner:
+                g2_win_loc_list = [loc.contents[0].strip() for loc in check_win_list[0].select('ul')[0].select('li')]
+            else:
+                pass
+
+            for g1_win_loc in g1_win_loc_list:
+                location = g1_win_loc[:g1_win_loc.rfind(' (')].strip()
+                ticket_type = g1_win_loc[g1_win_loc.rfind(' (')+1:].replace("(","").replace(")", "").strip()
+                toto_win_loc_list.append([toto_result_dt, location, ticket_type, 1])
+
+            for g2_win_loc in g2_win_loc_list:
+                location = g2_win_loc[:g2_win_loc.rfind(' (')].strip()
+                ticket_type = g2_win_loc[g2_win_loc.rfind(' (')+1:].replace("(","").replace(")", "").strip()
+                toto_win_loc_list.append([toto_result_dt, location, ticket_type, 2])
+
+
     except requests.exceptions.RequestException as e:
         print(f"Error fetching the page: {e}")
     
@@ -103,5 +136,10 @@ toto_result_df = pd.DataFrame(np.array(toto_result_list), columns=['Date', 'Win 
 toto_result_df.set_index('Date', inplace=True)
 # toto_result_df['Win'] = (toto_result_df['Win Type'] != LOSE).replace(True, 1)
 
+### Present Geo Findings in pd df ###
+toto_win_loc_df = pd.DataFrame(np.array(toto_win_loc_list), columns=['Date', 'Location', 'Ticket Type', 'Group'])
+toto_win_loc_df.set_index('Date', inplace=True)
+
 # Save DataFrames to CSV
 toto_result_df.to_csv('results/toto_results.csv')
+toto_win_loc_df.to_csv('results/toto_win_locations.csv')
